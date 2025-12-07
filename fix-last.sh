@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 自动检测并修复 last 命令
-# 兼容：Debian 13（使用 wtmpdb）以及旧版 Debian/Ubuntu（使用 util-linux）
+# - Debian 13 及更新：使用 wtmpdb + 包装脚本实现 last
+# - 旧版 Debian / Ubuntu：安装 util-linux 提供 last
 
 set -e
 
@@ -9,7 +10,7 @@ have_cmd() {
 }
 
 create_last_wrapper() {
-    # 给 Debian 13 这类没有 /usr/bin/last 但有 wtmpdb 的系统用
+    # 给没有 /usr/bin/last 但有 wtmpdb 的系统用
     if ! have_cmd wtmpdb; then
         echo "[!] 系统中没有 wtmpdb，无法创建 last 包装脚本。"
         return 1
@@ -48,37 +49,41 @@ echo "[*] 检测 last 命令..."
 if have_cmd last; then
     echo "    last 已存在: $(command -v last)"
 else
-    echo "    last 未找到，尝试安装或兼容处理..."
+    echo "    last 未找到，开始自动处理..."
 
-    # 若已有 wtmpdb，则优先创建包装脚本
+    # 1) 若系统已经有 wtmpdb，先尝试直接创建包装脚本
     if have_cmd wtmpdb; then
-        echo "    检测到系统已安装 wtmpdb，创建 last 包装脚本..."
+        echo "    检测到已安装 wtmpdb，优先创建 last 包装脚本..."
         create_last_wrapper || true
     fi
 
-    # 再检查一次 last 是否已经可用
+    # 2) 如果仍然没有 last，则尝试通过 apt 安装
     if ! have_cmd last; then
-        echo "[*] 尝试使用包管理器安装相关组件..."
-
         if have_cmd apt; then
+            echo "[*] 使用 apt 安装相关组件..."
             apt update
 
-            # 对 Debian 13 及以上使用 wtmpdb
-            if [ "$ID" = "debian" ] && [ -n "$VERSION_ID" ] && [ "${VERSION_ID%%.*}" -ge 13 ] 2>/dev/null; then
+            # 判断是否为 Debian 13 及以上（wtmpdb 新方案）
+            major_ver=""
+            if [ -n "$VERSION_ID" ]; then
+                major_ver="${VERSION_ID%%.*}"
+            fi
+
+            if [ "$ID" = "debian" ] && [ -n "$major_ver" ] && [ "$major_ver" -ge 13 ] 2>/dev/null; then
                 echo "    检测到 Debian $VERSION_ID，安装 wtmpdb 与 libpam-wtmpdb..."
                 apt install -y wtmpdb libpam-wtmpdb
-                # 安装后创建 last 包装脚本
+                # 安装后再创建 last 包装脚本
                 create_last_wrapper || true
             else
                 echo "    非 Debian 13，安装 util-linux（传统 last 所在包）..."
                 apt install -y util-linux
             fi
         else
-            echo "[!] 未找到 apt，无法自动安装，请手动安装 util-linux 或 wtmpdb。"
+            echo "[!] 未找到 apt 包管理器，请手动安装 util-linux 或 wtmpdb。"
         fi
     fi
 
-    # 最终确认 last 是否存在
+    # 3) 最终确认 last 是否存在
     if have_cmd last; then
         echo "    last 已可用: $(command -v last)"
     else
